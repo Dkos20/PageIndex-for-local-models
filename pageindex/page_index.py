@@ -525,10 +525,15 @@ def generate_toc_continue(toc_content, part, model="gpt-4o-2024-11-20"):
 
     prompt = prompt + '\nGiven text\n:' + part + '\nPrevious tree structure\n:' + json.dumps(toc_content, indent=2)
     response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
-    if finish_reason == 'finished':
-        return extract_json(response)
-    else:
+    if finish_reason != 'finished':
         raise Exception(f'finish reason: {finish_reason}')
+    parsed = extract_json(response) if isinstance(response, str) else response
+    if isinstance(parsed, dict) and 'table_of_contents' in parsed and isinstance(parsed['table_of_contents'], list):
+        parsed = parsed['table_of_contents']
+    if not isinstance(parsed, list):
+        preview = (response[:200] + '...') if isinstance(response, str) and len(response) > 200 else str(response)
+        raise TypeError(f"Expected a list from generate_toc_continue, got {type(parsed).__name__}. Preview: {preview}")
+    return parsed
     
 ### add verify completeness
 def generate_toc_init(part, model=None):
@@ -560,10 +565,15 @@ def generate_toc_init(part, model=None):
     prompt = prompt + '\nGiven text\n:' + part
     response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
 
-    if finish_reason == 'finished':
-         return extract_json(response)
-    else:
+    if finish_reason != 'finished':
         raise Exception(f'finish reason: {finish_reason}')
+    parsed = extract_json(response) if isinstance(response, str) else response
+    if isinstance(parsed, dict) and 'table_of_contents' in parsed and isinstance(parsed['table_of_contents'], list):
+        parsed = parsed['table_of_contents']
+    if not isinstance(parsed, list):
+        preview = (response[:200] + '...') if isinstance(response, str) and len(response) > 200 else str(response)
+        raise TypeError(f"Expected a list from generate_toc_init, got {type(parsed).__name__}. Preview: {preview}")
+    return parsed
 
 def process_no_toc(page_list, start_index=1, model=None, logger=None):
     page_contents=[]
@@ -576,8 +586,12 @@ def process_no_toc(page_list, start_index=1, model=None, logger=None):
     logger.info(f'len(group_texts): {len(group_texts)}')
 
     toc_with_page_number= generate_toc_init(group_texts[0], model)
+    if not isinstance(toc_with_page_number, list):
+        raise TypeError(f"generate_toc_init must return a list, got {type(toc_with_page_number).__name__}")
     for group_text in group_texts[1:]:
-        toc_with_page_number_additional = generate_toc_continue(toc_with_page_number, group_text, model)    
+        toc_with_page_number_additional = generate_toc_continue(toc_with_page_number, group_text, model)
+        if not isinstance(toc_with_page_number_additional, list):
+            raise TypeError(f"generate_toc_continue must return a list, got {type(toc_with_page_number_additional).__name__}")
         toc_with_page_number.extend(toc_with_page_number_additional)
     logger.info(f'generate_toc: {toc_with_page_number}')
 
