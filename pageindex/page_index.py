@@ -9,60 +9,6 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
-def _safe_parse_list(raw):
-    """
-    Try to parse a top-level JSON list from raw LLM output.
-    Steps:
-    - If raw is list, return as-is.
-    - If raw is dict with table_of_contents list, return that list.
-    - If raw is string, try extract_json first; if not list, try to slice the first [...] block.
-    """
-    # Already a list
-    if isinstance(raw, list):
-        return raw
-    # dict with table_of_contents
-    if isinstance(raw, dict) and 'table_of_contents' in raw and isinstance(raw['table_of_contents'], list):
-        return raw['table_of_contents']
-
-    s = raw
-    if not isinstance(s, str):
-        return raw  # let caller validate type
-
-    # Strip common code fences
-    s_stripped = s.strip()
-    if s_stripped.startswith('```'):
-        # remove first fence
-        s_stripped = s_stripped.split('\n', 1)[1] if '\n' in s_stripped else s_stripped.strip('`')
-        # remove trailing fence if present
-        if s_stripped.endswith('```'):
-            s_stripped = s_stripped.rsplit('```', 1)[0]
-        s_stripped = s_stripped.strip()
-
-    # First attempt: normal extract_json
-    try:
-        parsed = extract_json(s_stripped)
-        if isinstance(parsed, list):
-            return parsed
-        if isinstance(parsed, dict) and 'table_of_contents' in parsed and isinstance(parsed['table_of_contents'], list):
-            return parsed['table_of_contents']
-    except Exception:
-        pass
-
-    # Fallback: extract first JSON array by bracket scanning
-    start = s_stripped.find('[')
-    end = s_stripped.rfind(']')
-    if start != -1 and end != -1 and end > start:
-        candidate = s_stripped[start:end+1]
-        try:
-            arr = json.loads(candidate)
-            if isinstance(arr, list):
-                return arr
-        except Exception:
-            pass
-
-    return raw  # return original; caller will error with preview
-
-
 ################### check title in page #########################################################
 async def check_title_appearance(item, page_list, start_index=1, model=None):    
     title=item['title']
@@ -579,13 +525,10 @@ def generate_toc_continue(toc_content, part, model="gpt-4o-2024-11-20"):
 
     prompt = prompt + '\nGiven text\n:' + part + '\nPrevious tree structure\n:' + json.dumps(toc_content, indent=2)
     response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
-    if finish_reason != 'finished':
+    if finish_reason == 'finished':
+        return extract_json(response)
+    else:
         raise Exception(f'finish reason: {finish_reason}')
-    parsed = _safe_parse_list(response)
-    if not isinstance(parsed, list):
-        preview = (response[:200] + '...') if isinstance(response, str) and len(response) > 200 else str(response)
-        raise TypeError(f"Expected a list from generate_toc_continue, got {type(parsed).__name__}. Preview: {preview}")
-    return parsed
     
 ### add verify completeness
 def generate_toc_init(part, model=None):
@@ -617,13 +560,10 @@ def generate_toc_init(part, model=None):
     prompt = prompt + '\nGiven text\n:' + part
     response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
 
-    if finish_reason != 'finished':
+    if finish_reason == 'finished':
+         return extract_json(response)
+    else:
         raise Exception(f'finish reason: {finish_reason}')
-    parsed = _safe_parse_list(response)
-    if not isinstance(parsed, list):
-        preview = (response[:200] + '...') if isinstance(response, str) and len(response) > 200 else str(response)
-        raise TypeError(f"Expected a list from generate_toc_init, got {type(parsed).__name__}. Preview: {preview}")
-    return parsed
 
 def process_no_toc(page_list, start_index=1, model=None, logger=None):
     page_contents=[]
@@ -636,12 +576,8 @@ def process_no_toc(page_list, start_index=1, model=None, logger=None):
     logger.info(f'len(group_texts): {len(group_texts)}')
 
     toc_with_page_number= generate_toc_init(group_texts[0], model)
-    if not isinstance(toc_with_page_number, list):
-        raise TypeError(f"generate_toc_init must return a list, got {type(toc_with_page_number).__name__}")
     for group_text in group_texts[1:]:
-        toc_with_page_number_additional = generate_toc_continue(toc_with_page_number, group_text, model)
-        if not isinstance(toc_with_page_number_additional, list):
-            raise TypeError(f"generate_toc_continue must return a list, got {type(toc_with_page_number_additional).__name__}")
+        toc_with_page_number_additional = generate_toc_continue(toc_with_page_number, group_text, model)    
         toc_with_page_number.extend(toc_with_page_number_additional)
     logger.info(f'generate_toc: {toc_with_page_number}')
 
